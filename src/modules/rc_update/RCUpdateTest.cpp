@@ -50,8 +50,6 @@ TEST(RCUpdateTest, ModeSlotUnassigned)
 
 	// THEN: we receive no mode slot
 	uORB::SubscriptionData<manual_control_switches_s> manual_control_switches_sub{ORB_ID(manual_control_switches)};
-	manual_control_switches_sub.update();
-
 	EXPECT_EQ(manual_control_switches_sub.get().mode_slot, 0); // manual_control_switches_s::MODE_SLOT_NONE
 }
 
@@ -71,8 +69,6 @@ void checkModeSlotSwitch(float channel_value, uint8_t expected_slot)
 
 	// THEN: we receive the expected mode slot
 	uORB::SubscriptionData<manual_control_switches_s> manual_control_switches_sub{ORB_ID(manual_control_switches)};
-	manual_control_switches_sub.update();
-
 	EXPECT_EQ(manual_control_switches_sub.get().mode_slot, expected_slot);
 }
 
@@ -110,8 +106,6 @@ void checkModeSlotButton(uint8_t button_configuration, uint8_t channel, float ch
 
 	// THEN: we receive the expected mode slot
 	uORB::SubscriptionData<manual_control_switches_s> manual_control_switches_sub{ORB_ID(manual_control_switches)};
-	manual_control_switches_sub.update();
-
 	EXPECT_EQ(manual_control_switches_sub.get().mode_slot, expected_slot);
 }
 
