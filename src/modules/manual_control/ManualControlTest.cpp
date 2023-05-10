@@ -36,13 +36,17 @@
 #include <gtest/gtest.h>
 #include "ManualControl.hpp"
 
+static constexpr uint64_t SOME_TIME = 12345678;
 static constexpr uint8_t ACTION_KILL = action_request_s::ACTION_KILL;
 static constexpr uint8_t ACTION_UNKILL = action_request_s::ACTION_UNKILL;
+static constexpr uint8_t ACTION_VTOL_TRANSITION_TO_FIXEDWING = action_request_s::ACTION_VTOL_TRANSITION_TO_FIXEDWING;
+static constexpr uint8_t ACTION_VTOL_TRANSITION_TO_MULTICOPTER =
+	action_request_s::ACTION_VTOL_TRANSITION_TO_MULTICOPTER;
 
 class TestManualControl : public ManualControl
 {
 public:
-	void processInput() { ManualControl::processInput(); }
+	void processInput(hrt_abstime now) { ManualControl::processInput(now); }
 };
 
 class SwitchTest : public ::testing::Test
@@ -58,49 +62,144 @@ public:
 		param_set(param_find("COM_RC_LOSS_T"), &com_rc_loss_t);
 	}
 
-	uORB::PublicationData<manual_control_switches_s> _manual_control_switches_pub{ORB_ID(manual_control_switches)};
-	uORB::PublicationData<manual_control_setpoint_s> _manual_control_input_pub{ORB_ID(manual_control_input)};
+	uORB::Publication<manual_control_switches_s> _manual_control_switches_pub{ORB_ID(manual_control_switches)};
+	uORB::Publication<manual_control_setpoint_s> _manual_control_input_pub{ORB_ID(manual_control_input)};
 	uORB::SubscriptionData<manual_control_setpoint_s> _manual_control_setpoint_sub{ORB_ID(manual_control_setpoint)};
 	uORB::SubscriptionData<action_request_s> _action_request_sub{ORB_ID(action_request)};
 
 	TestManualControl _manual_control;
+	hrt_abstime _timestamp{SOME_TIME};
 };
 
 
 TEST_F(SwitchTest, KillSwitch)
 {
-	// GIVEN: valid stick input from the RC
-	_manual_control_input_pub.get().data_source = manual_control_setpoint_s::SOURCE_RC;
-	_manual_control_input_pub.get().valid = true;
-	_manual_control_input_pub.get().timestamp_sample = hrt_absolute_time();
-	_manual_control_input_pub.update();
+	// GIVEN: valid stick input from RC
+	_manual_control_input_pub.publish({.timestamp_sample = _timestamp, .valid = true, .data_source = manual_control_setpoint_s::SOURCE_RC});
+	// and kill switch in off position
+	_manual_control_switches_pub.publish({.timestamp_sample = _timestamp, .kill_switch = manual_control_switches_s::SWITCH_POS_OFF});
 
-	// GIVEN: a kill switch in off position
-	_manual_control_switches_pub.get().kill_switch = manual_control_switches_s::SWITCH_POS_OFF;
-	_manual_control_switches_pub.get().timestamp_sample = hrt_absolute_time();
-	_manual_control_switches_pub.update();
-
-	_manual_control.processInput();
-
-	// WHEN: the kill switch is switched on
-	_manual_control_switches_pub.get().kill_switch = manual_control_switches_s::SWITCH_POS_ON;
-	_manual_control_switches_pub.update();
-	_manual_control.processInput();
+	_manual_control.processInput(_timestamp += 100_ms);
 
 	// THEN: the stick input is published for use
 	EXPECT_TRUE(_manual_control_setpoint_sub.update());
 	EXPECT_TRUE(_manual_control_setpoint_sub.get().valid);
+	// but there is no action requested
+	EXPECT_FALSE(_action_request_sub.update());
+
+	// WHEN: the kill switch is switched on
+	_manual_control_switches_pub.publish({.timestamp_sample = _timestamp, .kill_switch = manual_control_switches_s::SWITCH_POS_ON});
+	_manual_control.processInput(_timestamp += 100_ms);
 
 	// THEN: a kill action request is published
 	EXPECT_TRUE(_action_request_sub.update());
 	EXPECT_EQ(_action_request_sub.get().action, ACTION_KILL);
 
 	// WHEN: the kill switch is switched off again
-	_manual_control_switches_pub.get().kill_switch = manual_control_switches_s::SWITCH_POS_OFF;
-	_manual_control_switches_pub.update();
-	_manual_control.processInput();
+	_manual_control_switches_pub.publish({.timestamp_sample = _timestamp, .kill_switch = manual_control_switches_s::SWITCH_POS_OFF});
+	_manual_control.processInput(_timestamp += 100_ms);
 
 	// THEN: an unkill action request is published
 	EXPECT_TRUE(_action_request_sub.update());
 	EXPECT_EQ(_action_request_sub.get().action, ACTION_UNKILL);
+}
+
+TEST_F(SwitchTest, TransitionSwitch)
+{
+	// GIVEN: valid stick input from RC
+	_manual_control_input_pub.publish({.timestamp_sample = _timestamp, .valid = true, .data_source = manual_control_setpoint_s::SOURCE_RC});
+	// and transition switch in off position
+	_manual_control_switches_pub.publish({.timestamp_sample = _timestamp, .transition_switch = manual_control_switches_s::SWITCH_POS_OFF});
+	_manual_control.processInput(_timestamp += 100_ms);
+
+	// THEN: the stick input is published for use
+	EXPECT_TRUE(_manual_control_setpoint_sub.update());
+	EXPECT_TRUE(_manual_control_setpoint_sub.get().valid);
+	// but there is no action requested
+	EXPECT_FALSE(_action_request_sub.update());
+
+	// WHEN: the transition switch is switched on
+	_manual_control_switches_pub.publish({.timestamp_sample = _timestamp, .transition_switch = manual_control_switches_s::SWITCH_POS_ON});
+	_manual_control.processInput(_timestamp += 100_ms);
+
+	// THEN: a forward transition action request is published
+	EXPECT_TRUE(_action_request_sub.update());
+	EXPECT_EQ(_action_request_sub.get().action, ACTION_VTOL_TRANSITION_TO_FIXEDWING);
+
+	// WHEN: the kill switch is switched off again
+	_manual_control_switches_pub.publish({.timestamp_sample = _timestamp, .transition_switch = manual_control_switches_s::SWITCH_POS_OFF});
+	_manual_control.processInput(_timestamp += 100_ms);
+
+	// THEN: an backward transition action request is published
+	EXPECT_TRUE(_action_request_sub.update());
+	EXPECT_EQ(_action_request_sub.get().action, ACTION_VTOL_TRANSITION_TO_MULTICOPTER);
+}
+
+TEST_F(SwitchTest, TransitionSwitchStaysRcLoss)
+{
+	// GIVEN: valid stick input from the RC
+	_manual_control_input_pub.publish({.timestamp_sample = _timestamp, .valid = true, .data_source = manual_control_setpoint_s::SOURCE_RC});
+	// and transition switch in off position
+	_manual_control_switches_pub.publish({.timestamp_sample = _timestamp, .transition_switch = manual_control_switches_s::SWITCH_POS_OFF});
+	_manual_control.processInput(_timestamp += 100_ms);
+
+	// THEN: the stick input is published for use
+	EXPECT_TRUE(_manual_control_setpoint_sub.update());
+	EXPECT_TRUE(_manual_control_setpoint_sub.get().valid);
+	// but there is no action requested
+	EXPECT_FALSE(_action_request_sub.update());
+
+	// WHEN: RC signal times out
+	_manual_control.processInput(_timestamp += 1_s);
+
+	// THEN: the stick input is invalidated
+	EXPECT_TRUE(_manual_control_setpoint_sub.update());
+	EXPECT_FALSE(_manual_control_setpoint_sub.get().valid);
+	// and there is no action requested
+	EXPECT_FALSE(_action_request_sub.update());
+
+	// WHEN: RC signal comes back
+	_manual_control_input_pub.publish({.timestamp_sample = _timestamp, .valid = true, .data_source = manual_control_setpoint_s::SOURCE_RC});
+	_manual_control.processInput(_timestamp += 100_ms);
+
+	// THEN: the stick input is avaialble again
+	EXPECT_TRUE(_manual_control_setpoint_sub.update());
+	EXPECT_TRUE(_manual_control_setpoint_sub.get().valid);
+	// but there is still no action requested
+	EXPECT_FALSE(_action_request_sub.update());
+}
+
+TEST_F(SwitchTest, TransitionSwitchChangesRcLoss)
+{
+	// GIVEN: valid stick input from the RC
+	_manual_control_input_pub.publish({.timestamp_sample = _timestamp, .valid = true, .data_source = manual_control_setpoint_s::SOURCE_RC});
+	// and transition switch in off position
+	_manual_control_switches_pub.publish({.timestamp_sample = _timestamp, .transition_switch = manual_control_switches_s::SWITCH_POS_OFF});
+	_manual_control.processInput(_timestamp += 100_ms);
+
+	// THEN: the stick input is published for use
+	EXPECT_TRUE(_manual_control_setpoint_sub.update());
+	EXPECT_TRUE(_manual_control_setpoint_sub.get().valid);
+	// but there is no action requested
+	EXPECT_FALSE(_action_request_sub.update());
+
+	// WHEN: RC signal times out
+	_manual_control.processInput(_timestamp += 1_s);
+
+	// THEN: the stick input is invalidated
+	EXPECT_TRUE(_manual_control_setpoint_sub.update());
+	EXPECT_FALSE(_manual_control_setpoint_sub.get().valid);
+	// and there is no action requested
+	EXPECT_FALSE(_action_request_sub.update());
+
+	// WHEN: RC signal comes back with the switch on
+	_manual_control_input_pub.publish({.timestamp_sample = _timestamp, .valid = true, .data_source = manual_control_setpoint_s::SOURCE_RC});
+	_manual_control_switches_pub.publish({.timestamp_sample = _timestamp, .transition_switch = manual_control_switches_s::SWITCH_POS_ON});
+	_manual_control.processInput(_timestamp += 100_ms);
+
+	// THEN: the stick input is avaialble again
+	EXPECT_TRUE(_manual_control_setpoint_sub.update());
+	EXPECT_TRUE(_manual_control_setpoint_sub.get().valid);
+	// but there is still no action requested
+	EXPECT_FALSE(_action_request_sub.update());
 }
