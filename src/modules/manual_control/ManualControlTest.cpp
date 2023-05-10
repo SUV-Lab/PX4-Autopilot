@@ -37,16 +37,26 @@
 #include "ManualControl.hpp"
 
 static constexpr uint64_t SOME_TIME = 12345678;
+
 static constexpr uint8_t ACTION_KILL = action_request_s::ACTION_KILL;
 static constexpr uint8_t ACTION_UNKILL = action_request_s::ACTION_UNKILL;
 static constexpr uint8_t ACTION_VTOL_TRANSITION_TO_FIXEDWING = action_request_s::ACTION_VTOL_TRANSITION_TO_FIXEDWING;
 static constexpr uint8_t ACTION_VTOL_TRANSITION_TO_MULTICOPTER =
 	action_request_s::ACTION_VTOL_TRANSITION_TO_MULTICOPTER;
+static constexpr uint8_t ACTION_SWITCH_MODE = action_request_s::ACTION_SWITCH_MODE;
+
+static constexpr uint8_t NAVIGATION_STATE_MANUAL = vehicle_status_s::NAVIGATION_STATE_MANUAL;
+static constexpr uint8_t NAVIGATION_STATE_ALTCTL = vehicle_status_s::NAVIGATION_STATE_ALTCTL;
+static constexpr uint8_t NAVIGATION_STATE_POSCTL = vehicle_status_s::NAVIGATION_STATE_POSCTL;
+static constexpr uint8_t NAVIGATION_STATE_AUTO_MISSION = vehicle_status_s::NAVIGATION_STATE_AUTO_MISSION;
+static constexpr uint8_t NAVIGATION_STATE_AUTO_LOITER = vehicle_status_s::NAVIGATION_STATE_AUTO_LOITER;
+static constexpr uint8_t NAVIGATION_STATE_ACRO = vehicle_status_s::NAVIGATION_STATE_ACRO;
 
 class TestManualControl : public ManualControl
 {
 public:
 	void processInput(hrt_abstime now) { ManualControl::processInput(now); }
+	static int8_t navStateFromParam(int32_t param_value) { return ManualControl::navStateFromParam(param_value); }
 };
 
 class SwitchTest : public ::testing::Test
@@ -60,6 +70,19 @@ public:
 		// Set stick input timeout to half a second
 		const float com_rc_loss_t = .5f;
 		param_set(param_find("COM_RC_LOSS_T"), &com_rc_loss_t);
+
+		int32_t mode = NAVIGATION_STATE_ACRO;
+		param_set(param_find("COM_FLTMODE1"), &mode);
+		mode = NAVIGATION_STATE_MANUAL;
+		param_set(param_find("COM_FLTMODE2"), &mode);
+		mode = NAVIGATION_STATE_ALTCTL;
+		param_set(param_find("COM_FLTMODE3"), &mode);
+		mode = NAVIGATION_STATE_POSCTL;
+		param_set(param_find("COM_FLTMODE4"), &mode);
+		mode = NAVIGATION_STATE_AUTO_LOITER;
+		param_set(param_find("COM_FLTMODE5"), &mode);
+		mode = NAVIGATION_STATE_AUTO_MISSION;
+		param_set(param_find("COM_FLTMODE6"), &mode);
 	}
 
 	uORB::Publication<manual_control_switches_s> _manual_control_switches_pub{ORB_ID(manual_control_switches)};
@@ -202,4 +225,61 @@ TEST_F(SwitchTest, TransitionSwitchChangesRcLoss)
 	EXPECT_TRUE(_manual_control_setpoint_sub.get().valid);
 	// but there is still no action requested
 	EXPECT_FALSE(_action_request_sub.update());
+}
+
+TEST_F(SwitchTest, ModeSwitch)
+{
+	// GIVEN: valid stick input from RC
+	_manual_control_input_pub.publish({.timestamp_sample = _timestamp, .valid = true, .data_source = manual_control_setpoint_s::SOURCE_RC});
+	// and mode switch in position 1
+	_manual_control_switches_pub.publish({.timestamp_sample = _timestamp, .mode_slot = manual_control_switches_s::MODE_SLOT_1});
+	_manual_control.processInput(_timestamp += 10_ms);
+
+	// THEN: the stick input is published for use
+	EXPECT_TRUE(_manual_control_setpoint_sub.update());
+	EXPECT_TRUE(_manual_control_setpoint_sub.get().valid);
+	// and action requested to switch to mode 1
+	EXPECT_TRUE(_action_request_sub.update());
+	EXPECT_EQ(_action_request_sub.get().action, ACTION_SWITCH_MODE);
+	EXPECT_EQ(_action_request_sub.get().mode, TestManualControl::navStateFromParam(NAVIGATION_STATE_ACRO));
+
+	// WHEN: the mode switch is switched to 2
+	_manual_control_switches_pub.publish({.timestamp_sample = _timestamp, .mode_slot = manual_control_switches_s::MODE_SLOT_2});
+	_manual_control.processInput(_timestamp += 10_ms);
+	// THEN: action requested to switch to mode 2
+	EXPECT_TRUE(_action_request_sub.update());
+	EXPECT_EQ(_action_request_sub.get().action, ACTION_SWITCH_MODE);
+	EXPECT_EQ(_action_request_sub.get().mode, TestManualControl::navStateFromParam(NAVIGATION_STATE_MANUAL));
+
+	// WHEN: the mode switch is switched to 3
+	_manual_control_switches_pub.publish({.timestamp_sample = _timestamp, .mode_slot = manual_control_switches_s::MODE_SLOT_3});
+	_manual_control.processInput(_timestamp += 10_ms);
+	// THEN: action requested to switch to mode 3
+	EXPECT_TRUE(_action_request_sub.update());
+	EXPECT_EQ(_action_request_sub.get().action, ACTION_SWITCH_MODE);
+	EXPECT_EQ(_action_request_sub.get().mode, TestManualControl::navStateFromParam(NAVIGATION_STATE_ALTCTL));
+
+	// WHEN: the mode switch is switched to 4
+	_manual_control_switches_pub.publish({.timestamp_sample = _timestamp, .mode_slot = manual_control_switches_s::MODE_SLOT_4});
+	_manual_control.processInput(_timestamp += 10_ms);
+	// THEN: action requested to switch to mode 4
+	EXPECT_TRUE(_action_request_sub.update());
+	EXPECT_EQ(_action_request_sub.get().action, ACTION_SWITCH_MODE);
+	EXPECT_EQ(_action_request_sub.get().mode, TestManualControl::navStateFromParam(NAVIGATION_STATE_POSCTL));
+
+	// WHEN: the mode switch is switched to 5
+	_manual_control_switches_pub.publish({.timestamp_sample = _timestamp, .mode_slot = manual_control_switches_s::MODE_SLOT_5});
+	_manual_control.processInput(_timestamp += 10_ms);
+	// THEN: action requested to switch to mode 5
+	EXPECT_TRUE(_action_request_sub.update());
+	EXPECT_EQ(_action_request_sub.get().action, ACTION_SWITCH_MODE);
+	EXPECT_EQ(_action_request_sub.get().mode, TestManualControl::navStateFromParam(NAVIGATION_STATE_AUTO_LOITER));
+
+	// WHEN: the mode switch is switched to 6
+	_manual_control_switches_pub.publish({.timestamp_sample = _timestamp, .mode_slot = manual_control_switches_s::MODE_SLOT_6});
+	_manual_control.processInput(_timestamp += 10_ms);
+	// THEN: action requested to switch to mode 6
+	EXPECT_TRUE(_action_request_sub.update());
+	EXPECT_EQ(_action_request_sub.get().action, ACTION_SWITCH_MODE);
+	EXPECT_EQ(_action_request_sub.get().mode, TestManualControl::navStateFromParam(NAVIGATION_STATE_AUTO_MISSION));
 }
