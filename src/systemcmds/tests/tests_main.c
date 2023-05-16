@@ -68,6 +68,7 @@ const struct {
 	{"jig",			test_jig,		OPT_NOJIGTEST | OPT_NOALLTEST},
 
 #ifdef __PX4_NUTTX
+	{"dataman",		test_dataman,	OPT_NOJIGTEST | OPT_NOALLTEST},
 	{"file",		test_file,		OPT_NOJIGTEST | OPT_NOALLTEST},
 	{"led",			test_led,		0},
 	{"mount",		test_mount,		OPT_NOJIGTEST | OPT_NOALLTEST},
@@ -81,7 +82,6 @@ const struct {
 	{"bezier",		test_bezierQuad,	0},
 	{"bitset",		test_bitset,		0},
 	{"bson",		test_bson,		0},
-	{"dataman",		test_dataman,		OPT_NOJIGTEST | OPT_NOALLTEST},
 	{"file2",		test_file2,		OPT_NOJIGTEST},
 	{"float",		test_float,		0},
 	{"hott_telemetry",	test_hott_telemetry,	OPT_NOJIGTEST | OPT_NOALLTEST},
